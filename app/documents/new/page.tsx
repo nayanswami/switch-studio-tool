@@ -410,7 +410,7 @@ function DocumentBuilderInner() {
             <p className="text-zinc-400 text-sm">Saved as a draft. Smart filename:<br /><code className="text-purple-400 text-xs">{suggestedFilename}</code></p>
             <div className="flex gap-3 justify-center pt-2">
               <button onClick={() => router.push('/documents')} className="glow-button-primary px-5 py-2.5 rounded-xl text-sm font-medium">View Documents</button>
-              <button onClick={() => router.push('/dashboard')} className="glow-button px-5 py-2.5 rounded-xl text-sm font-medium">Dashboard</button>
+              <button onClick={() => router.push('/')} className="glow-button px-5 py-2.5 rounded-xl text-sm font-medium">Dashboard</button>
             </div>
           </div>
         </div>
@@ -424,7 +424,7 @@ function DocumentBuilderInner() {
       <div className="no-print flex items-center justify-between px-6 py-4 border-b border-white/5 flex-shrink-0">
         <div className="flex items-center gap-4">
           <button
-            onClick={() => router.push('/dashboard')}
+            onClick={() => router.push('/')}
             className="p-1.5 rounded-full bg-white/5 border border-white/5 hover:bg-white/10 transition-colors"
           >
             <ArrowLeft className="w-4 h-4 text-zinc-400" />

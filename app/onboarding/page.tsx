@@ -194,7 +194,7 @@ export default function Onboarding() {
             <h2 className="text-xl font-semibold text-white">Profile Saved!</h2>
             <p className="text-zinc-400 text-sm">Your brand configuration is ready.</p>
             <div className="flex gap-3 justify-center pt-2">
-              <a href="/dashboard" className="glow-button-primary px-6 py-2.5 rounded-xl text-sm font-medium">Go to Dashboard</a>
+              <a href="/" className="glow-button-primary px-6 py-2.5 rounded-xl text-sm font-medium">Go to Dashboard</a>
               <button onClick={() => setSaved(false)} className="glow-button px-6 py-2.5 rounded-xl text-sm font-medium flex items-center gap-2">
                 <RotateCcw className="w-3.5 h-3.5" /> Edit Again
               </button>
