@@ -8,11 +8,13 @@ import { supabase } from '../../lib/supabase'
 // ─── Reusable Image Upload Widget ─────────────────────────────────────────────
 function ImageUpload({
   label,
+  bucket,
   currentUrl,
   onUpload,
   hint,
 }: {
   label: string
+  bucket: string
   currentUrl: string
   onUpload: (url: string) => void
   hint?: string
@@ -29,9 +31,9 @@ function ImageUpload({
     try {
       const ext = file.name.split('.').pop()
       const path = `${label.toLowerCase().replace(/\s/g, '_')}_${Date.now()}.${ext}`
-      const { error: upErr } = await supabase.storage.from('assets').upload(path, file, { upsert: true, contentType: file.type })
+      const { error: upErr } = await supabase.storage.from(bucket).upload(path, file, { upsert: true, contentType: file.type })
       if (upErr) throw upErr
-      const { data } = supabase.storage.from('assets').getPublicUrl(path)
+      const { data } = supabase.storage.from(bucket).getPublicUrl(path)
       onUpload(data.publicUrl)
     } catch (e: any) {
       setError(e.message || 'Upload failed')
@@ -215,12 +217,14 @@ export default function Settings() {
           <Section title="Brand Assets">
             <ImageUpload
               label="Company Logo"
+              bucket="brand-assets"
               currentUrl={form.logo_url}
               onUpload={url => setForm(prev => ({ ...prev, logo_url: url }))}
               hint="PNG, JPG, SVG or WebP · Max 5 MB · Shown on all generated documents"
             />
             <ImageUpload
               label="Digital Signature"
+              bucket="signatures"
               currentUrl={form.signature_url}
               onUpload={url => setForm(prev => ({ ...prev, signature_url: url }))}
               hint="PNG with transparent background recommended · Appears at document footer"
