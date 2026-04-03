@@ -4,17 +4,13 @@ import { useState, useEffect } from 'react'
 import { UserPlus, Search, Phone, Mail, MapPin, Trash2 } from 'lucide-react'
 import AppLayout from '../../components/AppLayout'
 import { supabase } from '../../lib/supabase'
+import { useAuthState } from '../../lib/authGuard'
+import { guestStore, GuestClient } from '../../lib/guestStore'
 
-interface Client {
-  id: string
-  name: string
-  email: string
-  address: string
-  phone: string
-  created_at: string
-}
+interface Client { id: string; name: string; email: string; address: string; phone: string; created_at: string }
 
 export default function Clients() {
+  const { user, isGuest, loading: authLoading } = useAuthState()
   const [profileId, setProfileId] = useState<string | null>(null)
   const [clients, setClients] = useState<Client[]>([])
   const [loading, setLoading] = useState(true)
@@ -23,62 +19,70 @@ export default function Clients() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [form, setForm] = useState({ name: '', email: '', address: '', phone: '' })
 
-  const fetchClients = async (pid: string) => {
-    const { data } = await supabase.from('clients').select('*').eq('profile_id', pid).order('created_at', { ascending: false })
-    setClients(data || [])
-    setLoading(false)
-  }
-
   useEffect(() => {
-    supabase.auth.getUser().then(async ({ data: { user } }) => {
-      if (!user) return
-      const { data: profile } = await supabase.from('profiles').select('id').eq('user_id', user.id).single()
-      if (profile) { setProfileId(profile.id); fetchClients(profile.id) }
-      else setLoading(false)
-    })
-  }, [])
+    if (authLoading) return
+    if (isGuest) {
+      setClients(guestStore.getClients())
+      setLoading(false)
+    } else {
+      supabase.auth.getUser().then(async ({ data: { user } }) => {
+        if (!user) return
+        const { data: profile } = await supabase.from('profiles').select('id').eq('user_id', user.id).single()
+        if (profile) {
+          setProfileId(profile.id)
+          const { data } = await supabase.from('clients').select('*').eq('profile_id', profile.id).order('created_at', { ascending: false })
+          setClients(data || [])
+        }
+        setLoading(false)
+      })
+    }
+  }, [isGuest, user, authLoading])
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!profileId) return
     setIsSubmitting(true)
-    await supabase.from('clients').insert([{ ...form, profile_id: profileId }])
+    if (isGuest) {
+      const newClient: GuestClient = { ...form, id: crypto.randomUUID(), created_at: new Date().toISOString() }
+      guestStore.addClient(newClient)
+      setClients(guestStore.getClients())
+    } else {
+      if (!profileId) return
+      await supabase.from('clients').insert([{ ...form, profile_id: profileId }])
+      const { data } = await supabase.from('clients').select('*').eq('profile_id', profileId).order('created_at', { ascending: false })
+      setClients(data || [])
+    }
     setForm({ name: '', email: '', address: '', phone: '' })
     setShowForm(false)
     setIsSubmitting(false)
-    fetchClients(profileId)
   }
 
   const handleDelete = async (id: string) => {
-    await supabase.from('clients').delete().eq('id', id)
-    setClients(prev => prev.filter(c => c.id !== id))
+    if (isGuest) {
+      guestStore.deleteClient(id)
+      setClients(guestStore.getClients())
+    } else {
+      await supabase.from('clients').delete().eq('id', id)
+      setClients(prev => prev.filter(c => c.id !== id))
+    }
   }
 
-  const filtered = clients.filter(
-    c => c.name?.toLowerCase().includes(search.toLowerCase()) || c.email?.toLowerCase().includes(search.toLowerCase())
-  )
-
+  const filtered = clients.filter(c => c.name?.toLowerCase().includes(search.toLowerCase()) || c.email?.toLowerCase().includes(search.toLowerCase()))
   const inputCls = 'premium-input block w-full rounded-xl py-2.5 px-4 text-sm'
 
   return (
     <AppLayout>
       <div className="p-4 lg:p-8 max-w-5xl mx-auto pb-12 pt-16 lg:pt-8">
-        {/* Header */}
         <div className="flex items-center justify-between mb-6 lg:mb-8">
           <div>
             <h1 className="text-2xl lg:text-3xl font-bold text-gradient-silver tracking-tight">Clients</h1>
             <p className="text-zinc-500 text-sm mt-1 hidden sm:block">Manage saved client profiles for quick autofill</p>
           </div>
-          <button
-            onClick={() => setShowForm(!showForm)}
-            className="glow-button-primary flex items-center space-x-2 px-3 py-2 lg:px-4 lg:py-2.5 rounded-xl text-sm font-medium"
-          >
-            <UserPlus className="w-4 h-4" />
-            <span>Add Client</span>
+          <button onClick={() => setShowForm(!showForm)}
+            className="glow-button-primary flex items-center space-x-2 px-3 py-2 lg:px-4 lg:py-2.5 rounded-xl text-sm font-medium">
+            <UserPlus className="w-4 h-4" /><span>Add Client</span>
           </button>
         </div>
 
-        {/* Add Client Form */}
         {showForm && (
           <form onSubmit={handleCreate} className="glass-card rounded-2xl p-5 lg:p-6 mb-6 space-y-4">
             <p className="text-sm font-semibold text-white mb-2">New Client Profile</p>
@@ -109,19 +113,12 @@ export default function Clients() {
           </form>
         )}
 
-        {/* Search */}
         <div className="relative mb-5">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" strokeWidth={1.5} />
-          <input
-            type="text"
-            className="premium-input block w-full rounded-xl py-2.5 pl-10 pr-4 text-sm"
-            placeholder="Search clients…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
+          <input type="text" className="premium-input block w-full rounded-xl py-2.5 pl-10 pr-4 text-sm" placeholder="Search clients…"
+            value={search} onChange={e => setSearch(e.target.value)} />
         </div>
 
-        {/* Client List */}
         {loading ? (
           <div className="space-y-3">{[1, 2, 3].map(i => <div key={i} className="h-20 glass-card rounded-2xl animate-pulse" />)}</div>
         ) : filtered.length === 0 ? (
@@ -146,10 +143,8 @@ export default function Clients() {
                     </div>
                   </div>
                 </div>
-                <button
-                  onClick={() => handleDelete(client.id)}
-                  className="p-2 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100 border border-transparent hover:border-red-500/20 shrink-0 ml-2"
-                >
+                <button onClick={() => handleDelete(client.id)}
+                  className="p-2 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100 border border-transparent hover:border-red-500/20 shrink-0 ml-2">
                   <Trash2 className="w-4 h-4" />
                 </button>
               </div>

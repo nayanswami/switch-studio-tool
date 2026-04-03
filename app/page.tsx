@@ -6,6 +6,8 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import AppLayout from '../components/AppLayout'
 import { supabase } from '../lib/supabase'
+import { useAuthState } from '../lib/authGuard'
+import { guestStore } from '../lib/guestStore'
 
 interface Doc {
   id: string
@@ -28,6 +30,7 @@ const SHORTCUTS = [
 
 export default function Dashboard() {
   const router = useRouter()
+  const { user, isGuest, loading: authLoading } = useAuthState()
   const [docs, setDocs] = useState<Doc[]>([])
   const [clientCount, setClientCount] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -35,30 +38,35 @@ export default function Dashboard() {
   const [companyName, setCompanyName] = useState<string | null>(null)
 
   useEffect(() => {
+    if (authLoading) return
+
     const load = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-
-      // Get profile for this user
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('id, company_name')
-        .eq('user_id', user.id)
-        .single()
-
-      if (profile) {
-        setCompanyName(profile.company_name)
-        const [{ data: docsData }, { count: cCount }] = await Promise.all([
-          supabase.from('documents').select('*').eq('profile_id', profile.id).order('created_at', { ascending: false }).limit(10),
-          supabase.from('clients').select('*', { count: 'exact', head: true }).eq('profile_id', profile.id),
-        ])
-        if (docsData) setDocs(docsData)
-        setClientCount(cCount || 0)
+      if (isGuest) {
+        // Guest: read from localStorage
+        const profile = guestStore.getProfile()
+        const localDocs = guestStore.getDocs()
+        const localClients = guestStore.getClients()
+        setCompanyName(profile.company_name || null)
+        setDocs(localDocs.slice(0, 10) as Doc[])
+        setClientCount(localClients.length)
+      } else {
+        // Signed in: read from Supabase, scoped to their profile
+        const { data: profile } = await supabase
+          .from('profiles').select('id, company_name').eq('user_id', user!.id).single()
+        if (profile) {
+          setCompanyName(profile.company_name)
+          const [{ data: docsData }, { count: cCount }] = await Promise.all([
+            supabase.from('documents').select('*').eq('profile_id', profile.id).order('created_at', { ascending: false }).limit(10),
+            supabase.from('clients').select('*', { count: 'exact', head: true }).eq('profile_id', profile.id),
+          ])
+          if (docsData) setDocs(docsData)
+          setClientCount(cCount || 0)
+        }
       }
       setLoading(false)
     }
     load()
-  }, [])
+  }, [isGuest, user, authLoading])
 
   const handleKey = useCallback((e: KeyboardEvent) => {
     if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement).tagName)) return
@@ -100,10 +108,7 @@ export default function Dashboard() {
     <AppLayout>
       {/* Shortcut Modal */}
       {showShortcuts && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
-          onClick={() => setShowShortcuts(false)}
-        >
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setShowShortcuts(false)}>
           <div className="glass-card rounded-2xl p-6 w-full max-w-sm" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-5">
               <div className="flex items-center gap-2">
@@ -128,7 +133,7 @@ export default function Dashboard() {
       )}
 
       <div className="p-4 lg:p-8 max-w-6xl mx-auto pb-16 pt-16 lg:pt-8">
-        {/* ── Header */}
+        {/* Header */}
         <div className="flex items-start justify-between mb-6 lg:mb-8">
           <div>
             <p className="text-zinc-500 text-sm">{today}</p>
@@ -136,10 +141,8 @@ export default function Dashboard() {
               {greeting()}{companyName ? `, ${companyName}` : ''} 👋
             </h1>
           </div>
-          <Link
-            href="/documents/new?type=invoice"
-            className="glow-button-primary flex items-center gap-2 px-3 py-2 lg:px-4 lg:py-2.5 rounded-xl text-sm font-medium"
-          >
+          <Link href="/documents/new?type=invoice"
+            className="glow-button-primary flex items-center gap-2 px-3 py-2 lg:px-4 lg:py-2.5 rounded-xl text-sm font-medium">
             <Plus className="w-4 h-4" />
             <span className="hidden sm:inline">New Invoice</span>
             <span className="sm:hidden">New</span>
@@ -147,7 +150,7 @@ export default function Dashboard() {
           </Link>
         </div>
 
-        {/* ── Quick Actions */}
+        {/* Quick Actions */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 lg:gap-4 mb-5 lg:mb-6">
           <Link href="/documents/new?type=invoice" className="glass-card glass-card-hover rounded-xl p-4 lg:p-5 flex items-center gap-3 lg:gap-4 group">
             <div className="w-9 h-9 lg:w-10 lg:h-10 rounded-xl bg-purple-500/15 border border-purple-500/25 flex items-center justify-center shrink-0">
@@ -162,7 +165,6 @@ export default function Dashboard() {
               <ChevronRight className="w-4 h-4 text-zinc-600 group-hover:text-zinc-400 transition-colors" />
             </div>
           </Link>
-
           <Link href="/documents/new?type=agreement" className="glass-card glass-card-hover rounded-xl p-4 lg:p-5 flex items-center gap-3 lg:gap-4 group">
             <div className="w-9 h-9 lg:w-10 lg:h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/25 flex items-center justify-center shrink-0">
               <FilePen className="w-4 h-4 lg:w-5 lg:h-5 text-emerald-400" strokeWidth={1.5} />
@@ -176,7 +178,6 @@ export default function Dashboard() {
               <ChevronRight className="w-4 h-4 text-zinc-600 group-hover:text-zinc-400 transition-colors" />
             </div>
           </Link>
-
           <Link href="/documents" className="glass-card glass-card-hover rounded-xl p-4 lg:p-5 flex items-center gap-3 lg:gap-4 group">
             <div className="w-9 h-9 lg:w-10 lg:h-10 rounded-xl bg-blue-500/15 border border-blue-500/25 flex items-center justify-center shrink-0">
               <FileStack className="w-4 h-4 lg:w-5 lg:h-5 text-blue-400" strokeWidth={1.5} />
@@ -192,7 +193,7 @@ export default function Dashboard() {
           </Link>
         </div>
 
-        {/* ── Stats Strip */}
+        {/* Stats Strip */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 lg:gap-3 mb-5 lg:mb-6">
           {[
             { label: 'Total Invoiced', value: `₹${totalInvoiced.toLocaleString('en-IN')}`, sub: 'all time', color: 'text-white' },
@@ -202,16 +203,13 @@ export default function Dashboard() {
           ].map((stat, i) => (
             <div key={i} className="glass-card rounded-xl px-3 py-3 lg:px-4 lg:py-3.5">
               <p className="text-xs text-zinc-500 mb-1">{stat.label}</p>
-              {loading
-                ? <div className="h-6 w-16 bg-white/5 rounded animate-pulse" />
-                : <p className={`text-base lg:text-lg font-bold ${stat.color}`}>{stat.value}</p>
-              }
+              {loading ? <div className="h-6 w-16 bg-white/5 rounded animate-pulse" /> : <p className={`text-base lg:text-lg font-bold ${stat.color}`}>{stat.value}</p>}
               <p className="text-xs text-zinc-600 mt-0.5">{stat.sub}</p>
             </div>
           ))}
         </div>
 
-        {/* ── Recent Documents */}
+        {/* Recent Documents */}
         <div className="glass-card rounded-2xl overflow-hidden">
           <div className="flex items-center justify-between px-4 lg:px-5 py-4 border-b border-white/5">
             <div className="flex items-center gap-2">
@@ -239,7 +237,6 @@ export default function Dashboard() {
             </div>
           ) : (
             <>
-              {/* Desktop table header */}
               <div className="hidden md:grid grid-cols-12 px-5 py-2.5 text-[10px] font-semibold text-zinc-600 uppercase tracking-widest border-b border-white/3">
                 <div className="col-span-1">Type</div>
                 <div className="col-span-4">Client</div>
@@ -249,13 +246,10 @@ export default function Dashboard() {
               </div>
               {docs.map(doc => (
                 <div key={doc.id} className="border-b border-white/3 last:border-0 hover:bg-white/2 transition-colors">
-                  {/* Desktop row */}
                   <div className="hidden md:grid grid-cols-12 items-center px-5 py-3.5">
                     <div className="col-span-1">
                       <div className={`w-6 h-6 rounded-lg flex items-center justify-center ${doc.type === 'invoice' ? 'bg-purple-500/15 border border-purple-500/20' : 'bg-emerald-500/15 border border-emerald-500/20'}`}>
-                        {doc.type === 'invoice'
-                          ? <FileText className="w-3 h-3 text-purple-400" strokeWidth={1.5} />
-                          : <FilePen className="w-3 h-3 text-emerald-400" strokeWidth={1.5} />}
+                        {doc.type === 'invoice' ? <FileText className="w-3 h-3 text-purple-400" strokeWidth={1.5} /> : <FilePen className="w-3 h-3 text-emerald-400" strokeWidth={1.5} />}
                       </div>
                     </div>
                     <div className="col-span-4">
@@ -272,12 +266,9 @@ export default function Dashboard() {
                       <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium capitalize ${statusCls(doc.status)}`}>{doc.status}</span>
                     </div>
                   </div>
-                  {/* Mobile row */}
                   <div className="md:hidden flex items-center gap-3 px-4 py-3">
                     <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${doc.type === 'invoice' ? 'bg-purple-500/15 border border-purple-500/20' : 'bg-emerald-500/15 border border-emerald-500/20'}`}>
-                      {doc.type === 'invoice'
-                        ? <FileText className="w-3.5 h-3.5 text-purple-400" strokeWidth={1.5} />
-                        : <FilePen className="w-3.5 h-3.5 text-emerald-400" strokeWidth={1.5} />}
+                      {doc.type === 'invoice' ? <FileText className="w-3.5 h-3.5 text-purple-400" strokeWidth={1.5} /> : <FilePen className="w-3.5 h-3.5 text-emerald-400" strokeWidth={1.5} />}
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-zinc-200 font-medium truncate">{doc.client_name}</p>
@@ -294,12 +285,9 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* ── Shortcut Hint Bar */}
         <div className="hidden lg:flex items-center justify-center gap-1 mt-6 flex-wrap">
-          <button
-            onClick={() => setShowShortcuts(true)}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-zinc-600 hover:text-zinc-400 hover:bg-white/5 transition-all border border-transparent hover:border-white/8"
-          >
+          <button onClick={() => setShowShortcuts(true)}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs text-zinc-600 hover:text-zinc-400 hover:bg-white/5 transition-all border border-transparent hover:border-white/8">
             <Keyboard className="w-3 h-3" />
             Press <kbd className="px-1.5 py-0.5 rounded bg-white/8 border border-white/10 font-mono text-zinc-400 font-bold">?</kbd> for all shortcuts
           </button>

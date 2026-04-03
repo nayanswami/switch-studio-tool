@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeft, Plus, Trash2, ChevronRight, ChevronLeft, Printer, CheckCircle2 } from 'lucide-react'
 import AppLayout from '../../../components/AppLayout'
 import { supabase } from '../../../lib/supabase'
+import { useAuthState } from '../../../lib/authGuard'
+import { guestStore, GuestDoc } from '../../../lib/guestStore'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -23,7 +25,9 @@ interface Profile {
   tax_id: string
   bank_details: string
   logo_url: string
+  logo_data_url?: string     // base64 — used for reliable print rendering
   signature_url: string
+  signature_data_url?: string // base64 — guaranteed to render in print
   tax_rate: number
   terms_conditions: string
   refund_policy: string
@@ -68,6 +72,7 @@ const TEMPLATES: Record<TemplateKey, { name: string; bg: string; text: string; m
 function DocumentPreview({
   docType, template: tKey, profile, clientDetails, lineItems,
   discount, taxEnabled, advancePaid, notes, agreementDetails, clauses, suggestedFilename,
+  logoBase64, signatureBase64,
 }: {
   docType: string; template: TemplateKey; profile: Profile | null
   clientDetails: { name: string; email: string; address: string }
@@ -75,6 +80,8 @@ function DocumentPreview({
   advancePaid: number; notes: string; suggestedFilename: string
   agreementDetails: { scope: string; timeline: string; revisions: number; projectName: string; projectId: string; ownershipClause: string }
   clauses: { rushFee: boolean; sourceFiles: boolean; killFee: boolean }
+  logoBase64?: string
+  signatureBase64?: string
 }) {
   const t = TEMPLATES[tKey]
   const subtotal = lineItems.reduce((s, i) => s + i.qty * i.rate, 0)
@@ -96,8 +103,10 @@ function DocumentPreview({
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 32, paddingBottom: 24, borderBottom: `2px solid ${t.accent}` }}>
         <div>
-          {profile?.logo_url ? (
-            <img src={profile.logo_url} alt="logo" style={{ height: 36, marginBottom: 8 }} />
+          {(profile?.logo_data_url || logoBase64 || profile?.logo_url) ? (
+            <img src={profile?.logo_data_url || logoBase64 || profile!.logo_url} alt="logo"
+              style={{ height: 36, marginBottom: 8, display: 'block' }}
+              crossOrigin="anonymous" />
           ) : (
             <div className={t.headingClass} style={{ color: t.accent, marginBottom: 4 }}>{profile?.company_name || 'Your Company'}</div>
           )}
@@ -262,10 +271,25 @@ function DocumentPreview({
       {/* Signature Area */}
       <div style={{ marginTop: docType === 'invoice' ? 32 : 48, display: 'flex', justifyContent: 'flex-end', pageBreakInside: 'avoid' }}>
         <div style={{ textAlign: 'center', width: 200 }}>
-          {profile?.signature_url ? (
-            <img src={profile.signature_url} alt="Signature" style={{ maxHeight: 60, margin: '0 auto', marginBottom: 8 }} />
+          {/* Signature — always use base64 data URL for reliable print rendering */}
+          {(profile?.signature_data_url || signatureBase64 || profile?.signature_url) ? (
+            <img
+              src={profile?.signature_data_url || signatureBase64 || profile!.signature_url}
+              alt="Signature"
+              crossOrigin="anonymous"
+              style={{
+                maxHeight: 72,
+                maxWidth: 200,
+                width: 'auto',
+                margin: '0 auto',
+                marginBottom: 8,
+                display: 'block',
+                WebkitPrintColorAdjust: 'exact',
+                printColorAdjust: 'exact',
+              } as React.CSSProperties}
+            />
           ) : (
-            <div style={{ height: 60, borderBottom: `1px solid ${t.border}`, marginBottom: 8 }} />
+            <div style={{ height: 64, borderBottom: `1px solid ${t.border}`, marginBottom: 8 }} />
           )}
           <div style={{ fontSize: 11, fontWeight: 600, color: t.text }}>{profile?.company_name || 'Authorized Signatory'}</div>
         </div>
@@ -298,6 +322,8 @@ function DocumentBuilderInner() {
   const [savedClients, setSavedClients] = useState<SavedClient[]>([])
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [success, setSuccess] = useState(false)
+  const [logoBase64, setLogoBase64] = useState<string | undefined>(undefined)
+  const [signatureBase64, setSignatureBase64] = useState<string | undefined>(undefined)
 
   // Form state
   const [clientDetails, setClientDetails] = useState({ name: '', email: '', address: '' })
@@ -324,19 +350,69 @@ function DocumentBuilderInner() {
 
   const suggestedFilename = `${(clientDetails.name || 'Client').replace(/\s+/g, '_')}_${docType === 'invoice' ? 'Invoice' : 'Agreement'}_v1.pdf`
 
+  // Convert a remote image URL to a base64 data URL to avoid cross-origin print failures
+  const toBase64 = async (url: string): Promise<string | undefined> => {
+    try {
+      const res = await fetch(url)
+      if (!res.ok) return undefined
+      const blob = await res.blob()
+      return new Promise((resolve) => {
+        const reader = new FileReader()
+        reader.onloadend = () => resolve(reader.result as string)
+        reader.onerror = () => resolve(undefined)
+        reader.readAsDataURL(blob)
+      })
+    } catch {
+      return undefined
+    }
+  }
+
+  const { user, isGuest } = useAuthState()
+
   useEffect(() => {
     const load = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-      const { data: p } = await supabase.from('profiles').select('*').eq('user_id', user.id).single()
-      if (p) {
-        setProfile(p)
-        const { data: c } = await supabase.from('clients').select('*').eq('profile_id', p.id).order('name')
-        if (c) setSavedClients(c)
+      if (isGuest) {
+        // Guest: load profile and clients from localStorage
+        const p = guestStore.getProfile()
+        const clients = guestStore.getClients()
+        // Synthesize a pseudo-profile object for DocumentPreview
+        setProfile({
+          id: 'guest',
+          company_name: p.company_name || '',
+          address: p.address || '',
+          tax_id: p.tax_id || '',
+          bank_details: p.bank_details || '',
+          logo_url: p.logo_url || '',
+          logo_data_url: p.logo_data_url || '',
+          signature_url: p.signature_url || '',
+          signature_data_url: p.signature_data_url || '',
+          tax_rate: parseFloat(p.tax_rate) || 0,
+          terms_conditions: p.terms_conditions || '',
+          refund_policy: p.refund_policy || '',
+          late_payment_rules: p.late_payment_rules || '',
+        } as Profile)
+        setSavedClients(clients as SavedClient[])
+        if (p.logo_data_url) setLogoBase64(p.logo_data_url)
+        if (p.signature_data_url) setSignatureBase64(p.signature_data_url)
+      } else {
+        // Signed in: load from Supabase
+        const { data: { user: authUser } } = await supabase.auth.getUser()
+        if (!authUser) return
+        const { data: p } = await supabase.from('profiles').select('*').eq('user_id', authUser.id).single()
+        if (p) {
+          setProfile(p)
+          const { data: c } = await supabase.from('clients').select('*').eq('profile_id', p.id).order('name')
+          if (c) setSavedClients(c)
+          // Use stored base64 if available — no async fetch needed
+          if (p.logo_data_url) setLogoBase64(p.logo_data_url)
+          else if (p.logo_url) toBase64(p.logo_url).then(b => { if (b) setLogoBase64(b) })
+          if (p.signature_data_url) setSignatureBase64(p.signature_data_url)
+          else if (p.signature_url) toBase64(p.signature_url).then(b => { if (b) setSignatureBase64(b) })
+        }
       }
     }
     load()
-  }, [])
+  }, [isGuest, user])
 
   const onClientSelect = (id: string) => {
     setSelectedClientId(id)
@@ -355,9 +431,31 @@ function DocumentBuilderInner() {
   const handleSave = async () => {
     setIsSubmitting(true)
     try {
+      const invNumber = `INV-${Date.now().toString().slice(-6)}`
+
+      if (isGuest) {
+        // Guest: save to localStorage
+        const doc: GuestDoc = {
+          id: crypto.randomUUID(),
+          type: docType,
+          client_name: clientDetails.name || 'Unnamed Client',
+          client_email: clientDetails.email || '',
+          total_amount: total,
+          status: 'draft',
+          created_at: new Date().toISOString(),
+          invoice_number: docType === 'invoice' ? invNumber : '',
+          template,
+          line_items: lineItems,
+        }
+        guestStore.addDoc(doc)
+        setSuccess(true)
+        setIsSubmitting(false)
+        return
+      }
+
+      // Signed-in: save to Supabase
       if (!profile) throw new Error('Complete onboarding first.')
 
-      const invNumber = `INV-${Date.now().toString().slice(-6)}`
       const { data: doc, error: docErr } = await supabase.from('documents').insert([{
         profile_id: profile.id,
         type: docType,
@@ -737,6 +835,8 @@ function DocumentBuilderInner() {
                 agreementDetails={agreementDetails}
                 clauses={clauses}
                 suggestedFilename={suggestedFilename}
+                logoBase64={logoBase64}
+                signatureBase64={signatureBase64}
               />
             </div>
           </div>
@@ -758,6 +858,8 @@ function DocumentBuilderInner() {
           agreementDetails={agreementDetails}
           clauses={clauses}
           suggestedFilename={suggestedFilename}
+          logoBase64={logoBase64}
+          signatureBase64={signatureBase64}
         />
       </div>
     </AppLayout>

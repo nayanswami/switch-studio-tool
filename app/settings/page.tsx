@@ -4,20 +4,16 @@ import { useState, useEffect, useRef } from 'react'
 import { CheckCircle2, Upload, X, ImageIcon } from 'lucide-react'
 import AppLayout from '../../components/AppLayout'
 import { supabase } from '../../lib/supabase'
+import { useAuthState } from '../../lib/authGuard'
+import { guestStore, fileToDataUrl } from '../../lib/guestStore'
 
-// ─── Reusable Image Upload Widget ─────────────────────────────────────────────
+// ─── Image Upload Widget ───────────────────────────────────────────────────────
 function ImageUpload({
-  label,
-  bucket,
-  currentUrl,
-  onUpload,
-  hint,
+  label, bucket, currentUrl, onUpload, hint, isGuest, onLocalUpload,
 }: {
-  label: string
-  bucket: string
-  currentUrl: string
-  onUpload: (url: string) => void
-  hint?: string
+  label: string; bucket: string; currentUrl: string
+  onUpload: (url: string) => void; hint?: string
+  isGuest: boolean; onLocalUpload: (dataUrl: string, file: File) => void
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
@@ -28,15 +24,26 @@ function ImageUpload({
     if (file.size > 5 * 1024 * 1024) { setError('File must be under 5 MB'); return }
     setError(null)
     setUploading(true)
-    try {
-      const ext = file.name.split('.').pop()
-      const path = `${label.toLowerCase().replace(/\s/g, '_')}_${Date.now()}.${ext}`
-      const { error: upErr } = await supabase.storage.from(bucket).upload(path, file, { upsert: true, contentType: file.type })
-      if (upErr) throw upErr
-      const { data } = supabase.storage.from(bucket).getPublicUrl(path)
-      onUpload(data.publicUrl)
-    } catch (e: any) {
-      setError(e.message || 'Upload failed')
+
+    // Always convert to base64 first (needed for print reliability)
+    const dataUrl = await fileToDataUrl(file)
+
+    if (isGuest) {
+      // Guest: just store as base64 in localStorage, no Supabase upload
+      onLocalUpload(dataUrl, file)
+    } else {
+      // Signed-in: upload to Supabase storage AND store dataUrl
+      try {
+        const ext = file.name.split('.').pop()
+        const path = `${label.toLowerCase().replace(/\s/g, '_')}_${Date.now()}.${ext}`
+        const { error: upErr } = await supabase.storage.from(bucket).upload(path, file, { upsert: true, contentType: file.type })
+        if (upErr) throw upErr
+        const { data } = supabase.storage.from(bucket).getPublicUrl(path)
+        onUpload(data.publicUrl)
+        onLocalUpload(dataUrl, file) // also pass dataUrl for profile update
+      } catch (e: any) {
+        setError(e.message || 'Upload failed')
+      }
     }
     setUploading(false)
   }
@@ -52,21 +59,14 @@ function ImageUpload({
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex gap-2 mb-2">
-            <button
-              type="button"
-              onClick={() => inputRef.current?.click()}
-              disabled={uploading}
-              className="glow-button flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium"
-            >
+            <button type="button" onClick={() => inputRef.current?.click()} disabled={uploading}
+              className="glow-button flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium">
               <Upload className="w-3.5 h-3.5" />
-              {uploading ? 'Uploading…' : 'Upload Image'}
+              {uploading ? 'Processing…' : 'Upload Image'}
             </button>
             {currentUrl && (
-              <button
-                type="button"
-                onClick={() => onUpload('')}
-                className="p-2 rounded-lg text-zinc-500 hover:text-red-400 hover:bg-red-500/10 transition-all border border-transparent hover:border-red-500/20"
-              >
+              <button type="button" onClick={() => onUpload('')}
+                className="p-2 rounded-lg text-zinc-500 hover:text-red-400 hover:bg-red-500/10 transition-all border border-transparent hover:border-red-500/20">
                 <X className="w-3.5 h-3.5" />
               </button>
             )}
@@ -75,64 +75,52 @@ function ImageUpload({
           {error && <p className="text-xs text-red-400 mt-1">{error}</p>}
           {currentUrl && (
             <p className="text-xs text-emerald-400 mt-1 flex items-center gap-1">
-              <CheckCircle2 className="w-3 h-3" /> Uploaded successfully
+              <CheckCircle2 className="w-3 h-3" /> {isGuest ? 'Stored locally' : 'Uploaded successfully'}
             </p>
           )}
         </div>
       </div>
-      <input
-        ref={inputRef}
-        type="file"
-        accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml"
-        className="hidden"
-        onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])}
-      />
+      <input ref={inputRef} type="file" accept="image/png,image/jpeg,image/jpg,image/webp,image/svg+xml"
+        className="hidden" onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])} />
     </div>
   )
 }
 
 // ─── Settings Page ─────────────────────────────────────────────────────────────
 export default function Settings() {
+  const { user, isGuest, loading: authLoading } = useAuthState()
   const [existingId, setExistingId] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [form, setForm] = useState({
-    company_name: '',
-    address: '',
-    tax_id: '',
-    bank_details: '',
-    logo_url: '',
-    signature_url: '',
-    tax_rate: '',
-    terms_conditions: '',
-    refund_policy: '',
-    late_payment_rules: '',
+    company_name: '', address: '', tax_id: '', bank_details: '',
+    logo_url: '', logo_data_url: '',
+    signature_url: '', signature_data_url: '',
+    tax_rate: '', terms_conditions: '', refund_policy: '', late_payment_rules: '',
   })
 
   useEffect(() => {
-    const load = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-      const { data } = await supabase.from('profiles').select('*').eq('user_id', user.id).single()
-      if (data) {
-        setExistingId(data.id)
-        setForm({
-          company_name: data.company_name || '',
-          address: data.address || '',
-          tax_id: data.tax_id || '',
-          bank_details: data.bank_details || '',
-          logo_url: data.logo_url || '',
-          signature_url: data.signature_url || '',
-          tax_rate: data.tax_rate?.toString() || '',
-          terms_conditions: data.terms_conditions || '',
-          refund_policy: data.refund_policy || '',
-          late_payment_rules: data.late_payment_rules || '',
-        })
-      }
+    if (authLoading) return
+    if (isGuest) {
+      const p = guestStore.getProfile()
+      setForm(f => ({ ...f, ...p }))
+    } else {
+      supabase.from('profiles').select('*').eq('user_id', user!.id).single().then(({ data }) => {
+        if (data) {
+          setExistingId(data.id)
+          setForm({
+            company_name: data.company_name || '', address: data.address || '',
+            tax_id: data.tax_id || '', bank_details: data.bank_details || '',
+            logo_url: data.logo_url || '', logo_data_url: data.logo_data_url || '',
+            signature_url: data.signature_url || '', signature_data_url: data.signature_data_url || '',
+            tax_rate: data.tax_rate?.toString() || '', terms_conditions: data.terms_conditions || '',
+            refund_policy: data.refund_policy || '', late_payment_rules: data.late_payment_rules || '',
+          })
+        }
+      })
     }
-    load()
-  }, [])
+  }, [isGuest, user, authLoading])
 
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setForm(p => ({ ...p, [k]: e.target.value }))
@@ -142,27 +130,29 @@ export default function Settings() {
     setIsSubmitting(true)
     setError(null)
     setSaved(false)
-    const payload = {
-      company_name: form.company_name,
-      address: form.address,
-      tax_id: form.tax_id,
-      bank_details: form.bank_details,
-      logo_url: form.logo_url || null,
-      signature_url: form.signature_url || null,
-      tax_rate: parseFloat(form.tax_rate) || 0,
-      terms_conditions: form.terms_conditions || null,
-      refund_policy: form.refund_policy || null,
-      late_payment_rules: form.late_payment_rules || null,
-      updated_at: new Date().toISOString(),
+
+    if (isGuest) {
+      guestStore.saveProfile(form)
+      setSaved(true)
+      setIsSubmitting(false)
+      return
     }
 
+    const payload = {
+      company_name: form.company_name, address: form.address, tax_id: form.tax_id,
+      bank_details: form.bank_details,
+      logo_url: form.logo_url || null, logo_data_url: form.logo_data_url || null,
+      signature_url: form.signature_url || null, signature_data_url: form.signature_data_url || null,
+      tax_rate: parseFloat(form.tax_rate) || 0, terms_conditions: form.terms_conditions || null,
+      refund_policy: form.refund_policy || null, late_payment_rules: form.late_payment_rules || null,
+      updated_at: new Date().toISOString(),
+    }
     let err = null
     if (existingId) {
       const { error: e } = await supabase.from('profiles').update(payload).eq('id', existingId)
       err = e
     } else {
-      const { data: { user } } = await supabase.auth.getUser()
-      const { error: e, data } = await supabase.from('profiles').insert([{ ...payload, user_id: user?.id }]).select().single()
+      const { error: e, data } = await supabase.from('profiles').insert([{ ...payload, user_id: user!.id }]).select().single()
       err = e
       if (data) setExistingId(data.id)
     }
@@ -187,11 +177,13 @@ export default function Settings() {
       <div className="p-4 lg:p-8 max-w-3xl mx-auto pb-12 pt-16 lg:pt-8">
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gradient-silver tracking-tight">Settings</h1>
-          <p className="text-zinc-500 text-sm mt-1">Manage your brand profile and global document segments</p>
+          <p className="text-zinc-500 text-sm mt-1">
+            Manage your brand profile and global document segments
+            {isGuest && <span className="ml-2 text-amber-500">(saved locally — click Save to Cloud in the sidebar to persist)</span>}
+          </p>
         </div>
 
         <form onSubmit={handleSave} className="space-y-5">
-
           <Section title="Brand Information">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="md:col-span-2">
@@ -219,17 +211,21 @@ export default function Settings() {
 
           <Section title="Brand Assets">
             <ImageUpload
-              label="Company Logo"
-              bucket="brand-assets"
-              currentUrl={form.logo_url}
-              onUpload={url => setForm(prev => ({ ...prev, logo_url: url }))}
+              label="Company Logo" bucket="brand-assets" currentUrl={form.logo_data_url || form.logo_url}
+              onUpload={url => setForm(prev => ({ ...prev, logo_url: url, logo_data_url: '' }))}
+              onLocalUpload={(dataUrl, _file) => setForm(prev => ({
+                ...prev, logo_data_url: dataUrl,
+              }))}
+              isGuest={isGuest}
               hint="PNG, JPG, SVG or WebP · Max 5 MB · Shown on all generated documents"
             />
             <ImageUpload
-              label="Digital Signature"
-              bucket="signatures"
-              currentUrl={form.signature_url}
-              onUpload={url => setForm(prev => ({ ...prev, signature_url: url }))}
+              label="Digital Signature" bucket="signatures" currentUrl={form.signature_data_url || form.signature_url}
+              onUpload={url => setForm(prev => ({ ...prev, signature_url: url, signature_data_url: '' }))}
+              onLocalUpload={(dataUrl, _file) => setForm(prev => ({
+                ...prev, signature_data_url: dataUrl,
+              }))}
+              isGuest={isGuest}
               hint="PNG with transparent background recommended · Appears at document footer"
             />
           </Section>
@@ -250,10 +246,9 @@ export default function Settings() {
           </Section>
 
           {error && <div className="text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 text-sm">{error}</div>}
-
           {saved && (
             <div className="flex items-center gap-2 text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-4 py-3 text-sm">
-              <CheckCircle2 className="w-4 h-4" /> Settings saved successfully
+              <CheckCircle2 className="w-4 h-4" /> Settings saved {isGuest ? 'locally' : 'successfully'}
             </div>
           )}
 

@@ -190,5 +190,6 @@ body {
   body { background: white !important; color: black !important; }
   body::before, body::after { display: none !important; }
   .ambient-bg::before, .ambient-bg::after { display: none !important; }
+  img { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
   @page { margin: 0; size: A4; }
 }
