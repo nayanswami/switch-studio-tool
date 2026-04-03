@@ -9,8 +9,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Switch Studio",
-  description: "Agency Management & Document Automation",
+  title: "Invoice Tool",
+  description: "Agency Document Automation — Invoices & Agreements",
 };
 
 export default function RootLayout({

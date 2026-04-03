@@ -57,7 +57,7 @@ export default function Documents() {
 
   return (
     <AppLayout>
-      <div className="p-6 lg:p-8 max-w-6xl mx-auto pb-12">
+      <div className="p-4 lg:p-8 max-w-6xl mx-auto pb-12 pt-16 lg:pt-8">
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div>

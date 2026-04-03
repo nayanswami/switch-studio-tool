@@ -112,7 +112,9 @@ export default function Settings() {
 
   useEffect(() => {
     const load = async () => {
-      const { data } = await supabase.from('profiles').select('*').limit(1).single()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      const { data } = await supabase.from('profiles').select('*').eq('user_id', user.id).single()
       if (data) {
         setExistingId(data.id)
         setForm({
@@ -159,7 +161,8 @@ export default function Settings() {
       const { error: e } = await supabase.from('profiles').update(payload).eq('id', existingId)
       err = e
     } else {
-      const { error: e, data } = await supabase.from('profiles').insert([payload]).select().single()
+      const { data: { user } } = await supabase.auth.getUser()
+      const { error: e, data } = await supabase.from('profiles').insert([{ ...payload, user_id: user?.id }]).select().single()
       err = e
       if (data) setExistingId(data.id)
     }
@@ -181,7 +184,7 @@ export default function Settings() {
 
   return (
     <AppLayout>
-      <div className="p-6 lg:p-8 max-w-3xl mx-auto pb-12">
+      <div className="p-4 lg:p-8 max-w-3xl mx-auto pb-12 pt-16 lg:pt-8">
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gradient-silver tracking-tight">Settings</h1>
           <p className="text-zinc-500 text-sm mt-1">Manage your brand profile and global document segments</p>

@@ -326,12 +326,14 @@ function DocumentBuilderInner() {
 
   useEffect(() => {
     const load = async () => {
-      const [{ data: p }, { data: c }] = await Promise.all([
-        supabase.from('profiles').select('*').limit(1).single(),
-        supabase.from('clients').select('*').order('name'),
-      ])
-      if (p) setProfile(p)
-      if (c) setSavedClients(c)
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      const { data: p } = await supabase.from('profiles').select('*').eq('user_id', user.id).single()
+      if (p) {
+        setProfile(p)
+        const { data: c } = await supabase.from('clients').select('*').eq('profile_id', p.id).order('name')
+        if (c) setSavedClients(c)
+      }
     }
     load()
   }, [])

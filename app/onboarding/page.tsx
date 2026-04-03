@@ -114,7 +114,9 @@ export default function Onboarding() {
 
   useEffect(() => {
     const fetchProfile = async () => {
-      const { data } = await supabase.from('profiles').select('*').limit(1).single()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      const { data } = await supabase.from('profiles').select('*').eq('user_id', user.id).single()
       if (data) {
         setExistingId(data.id)
         setForm({
@@ -160,7 +162,8 @@ export default function Onboarding() {
       const { error: uErr } = await supabase.from('profiles').update(payload).eq('id', existingId)
       err = uErr
     } else {
-      const { error: iErr } = await supabase.from('profiles').insert([payload])
+      const { data: { user } } = await supabase.auth.getUser()
+      const { error: iErr } = await supabase.from('profiles').insert([{ ...payload, user_id: user?.id }])
       err = iErr
     }
 
@@ -185,7 +188,7 @@ export default function Onboarding() {
             <span className="text-xs text-zinc-400">{existingId ? 'Edit your' : 'Setup your'} workspace</span>
           </div>
           <h1 className="text-4xl font-bold text-gradient-silver tracking-tight">Brand Profile</h1>
-          <p className="text-zinc-500 text-sm mt-2">Configure Switch Studio with your agency details</p>
+          <p className="text-zinc-500 text-sm mt-2">Configure Invoice Tool with your agency details</p>
         </div>
 
         {saved ? (
