@@ -260,7 +260,7 @@ function DocumentPreview({
       )}
 
       {/* Signature Area */}
-      <div style={{ marginTop: docType === 'invoice' ? 32 : 48, display: 'flex', justifyContent: 'flex-end', noBreakInside: 'avoid' }}>
+      <div style={{ marginTop: docType === 'invoice' ? 32 : 48, display: 'flex', justifyContent: 'flex-end', pageBreakInside: 'avoid' }}>
         <div style={{ textAlign: 'center', width: 200 }}>
           {profile?.signature_url ? (
             <img src={profile.signature_url} alt="Signature" style={{ maxHeight: 60, margin: '0 auto', marginBottom: 8 }} />
