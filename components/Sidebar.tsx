@@ -2,7 +2,9 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useState, useEffect } from 'react'
 import { LayoutDashboard, FileText, Users, Settings, Zap, FilePen } from 'lucide-react'
+import { supabase } from '../lib/supabase'
 
 const navItems = [
   { href: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -13,15 +15,28 @@ const navItems = [
 
 export default function Sidebar() {
   const pathname = usePathname()
+  const [profile, setProfile] = useState<{ company_name: string; logo_url: string } | null>(null)
+
+  useEffect(() => {
+    supabase.from('profiles').select('company_name, logo_url').limit(1).single().then(({ data }) => {
+      if (data) setProfile(data)
+    })
+  }, [])
 
   return (
     <aside className="no-print w-56 flex-shrink-0 flex flex-col h-screen bg-black border-r border-white/5 relative z-20">
       {/* Logo */}
-      <div className="flex items-center space-x-2.5 px-5 py-5 border-b border-white/5">
-        <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-purple-500 to-purple-800 flex items-center justify-center flex-shrink-0">
-          <Zap className="w-4 h-4 text-white" strokeWidth={2} />
-        </div>
-        <span className="font-bold text-sm text-white tracking-tight">Switch Studio</span>
+      <div className="flex items-center space-x-2.5 px-5 py-5 border-b border-white/5 overflow-hidden">
+        {profile?.logo_url ? (
+          <img src={profile.logo_url} alt="Logo" className="w-7 h-7 object-contain flex-shrink-0" />
+        ) : (
+          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-purple-500 to-purple-800 flex items-center justify-center flex-shrink-0">
+            <Zap className="w-4 h-4 text-white" strokeWidth={2} />
+          </div>
+        )}
+        <span className="font-bold text-sm text-white tracking-tight truncate">
+          {profile?.company_name || 'Switch Studio'}
+        </span>
       </div>
 
       {/* Nav */}

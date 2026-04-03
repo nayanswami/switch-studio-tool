@@ -259,6 +259,18 @@ function DocumentPreview({
         </div>
       )}
 
+      {/* Signature Area */}
+      <div style={{ marginTop: docType === 'invoice' ? 32 : 48, display: 'flex', justifyContent: 'flex-end', noBreakInside: 'avoid' }}>
+        <div style={{ textAlign: 'center', width: 200 }}>
+          {profile?.signature_url ? (
+            <img src={profile.signature_url} alt="Signature" style={{ maxHeight: 60, margin: '0 auto', marginBottom: 8 }} />
+          ) : (
+            <div style={{ height: 60, borderBottom: `1px solid ${t.border}`, marginBottom: 8 }} />
+          )}
+          <div style={{ fontSize: 11, fontWeight: 600, color: t.text }}>{profile?.company_name || 'Authorized Signatory'}</div>
+        </div>
+      </div>
+
       {/* Footer */}
       <div style={{ position: 'absolute', bottom: 32, left: 40, right: 40, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderTop: `1px solid ${t.border}`, paddingTop: 16 }}>
         <div style={{ fontSize: 10, color: t.muted }}>
